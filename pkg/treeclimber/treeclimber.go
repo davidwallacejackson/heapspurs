@@ -27,7 +27,10 @@ type TreeClimber struct {
 }
 
 func NewTreeClimber(reader *bufio.Reader) (*TreeClimber, error) {
-	c := &TreeClimber{}
+	c := &TreeClimber{
+		valueAddrsToTypeDescriptors: make(map[uint64]*heapdump.TypeDescriptor),
+		valueAddrsToItabs:           make(map[uint64]*heapdump.Itab),
+	}
 	err := c.build(reader)
 	if err != nil {
 		return nil, err
@@ -385,29 +388,31 @@ func (c *TreeClimber) addOwner(address uint64, r heapdump.Record) {
 	c.owners[address] = append(c.owners[address], r)
 }
 
-func (c *TreeClimber) addFields(fields []uint64) {
+func (c *TreeClimber) addFields(o heapdump.Owner) {
 	var lastTypeDescriptor *heapdump.TypeDescriptor
 	var lastItab *heapdump.Itab
-	for _, field := range fields {
+	pointers := heapdump.GetPointers(o, c.params)
+
+	for _, ptr := range pointers {
 		if lastTypeDescriptor != nil {
-			c.valueAddrsToTypeDescriptors[field] = lastTypeDescriptor
+			c.valueAddrsToTypeDescriptors[ptr] = lastTypeDescriptor
 			lastTypeDescriptor = nil
 			lastItab = nil
 			continue
 		}
 		if lastItab != nil {
-			c.valueAddrsToItabs[field] = lastItab
+			c.valueAddrsToItabs[ptr] = lastItab
 			lastTypeDescriptor = nil
 			lastItab = nil
 			continue
 		}
 
-		tmpTypeDescriptor := getAs[*heapdump.TypeDescriptor](c, field)
+		tmpTypeDescriptor := getAs[*heapdump.TypeDescriptor](c, ptr)
 		if tmpTypeDescriptor != nil {
 			lastTypeDescriptor = *tmpTypeDescriptor
 		}
 
-		tmpItab := getAs[*heapdump.Itab](c, field)
+		tmpItab := getAs[*heapdump.Itab](c, ptr)
 		if tmpItab != nil {
 			lastItab = *tmpItab
 		}
@@ -418,7 +423,7 @@ func (c *TreeClimber) annotate() {
 	for _, r := range c.records {
 		switch record := r.(type) {
 		case heapdump.Owner:
-			c.addFields(record.GetFields())
+			c.addFields(record)
 		}
 	}
 }
