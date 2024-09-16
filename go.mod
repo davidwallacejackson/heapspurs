@@ -1,6 +1,6 @@
 module github.com/adamroach/heapspurs
 
-go 1.17
+go 1.23
 
 require (
 	github.com/fogleman/gg v1.3.0 // indirect

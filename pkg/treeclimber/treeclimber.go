@@ -13,8 +13,14 @@ import (
 )
 
 type TreeClimber struct {
-	params     *heapdump.DumpParams
-	memory     map[uint64]heapdump.Record   // Map of all records that represet an in-memory construct
+	params *heapdump.DumpParams
+
+	records []heapdump.Record // All records in the heap dump
+
+	memory                      map[uint64]heapdump.Record // Map of all records that represet an in-memory construct
+	valueAddrsToTypeDescriptors map[uint64]*heapdump.TypeDescriptor
+	valueAddrsToItabs           map[uint64]*heapdump.Itab // Map of all type descriptors
+
 	owners     map[uint64][]heapdump.Record // Maps from pointed-to objects to the thing(s) pointing to them
 	visited    map[uint64]bool              // Temporary state used to keep track of already-visited nodes during graph traversal
 	finalizers map[uint64]heapdump.Record   // Map of object address to its finalizer (if any)
@@ -23,6 +29,12 @@ type TreeClimber struct {
 func NewTreeClimber(reader *bufio.Reader) (*TreeClimber, error) {
 	c := &TreeClimber{}
 	err := c.build(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	c.annotate()
+
 	return c, err
 }
 
@@ -297,6 +309,20 @@ func (c *TreeClimber) printAnchors(address uint64) error {
 	return nil
 }
 
+func getAs[R heapdump.Record](c *TreeClimber, address uint64) *R {
+	r, found := c.memory[address]
+	if !found {
+		return nil
+	}
+
+	asType, isType := r.(R)
+	if isType {
+		return &asType
+	}
+
+	return nil
+}
+
 func (c *TreeClimber) build(reader *bufio.Reader) error {
 	err := heapdump.ReadHeader(reader)
 	if err != nil {
@@ -344,6 +370,7 @@ readloop:
 			}
 		}
 
+		c.records = append(c.records, record)
 	}
 
 	return nil
@@ -356,4 +383,42 @@ func (c *TreeClimber) addOwner(address uint64, r heapdump.Record) {
 	}
 
 	c.owners[address] = append(c.owners[address], r)
+}
+
+func (c *TreeClimber) addFields(fields []uint64) {
+	var lastTypeDescriptor *heapdump.TypeDescriptor
+	var lastItab *heapdump.Itab
+	for _, field := range fields {
+		if lastTypeDescriptor != nil {
+			c.valueAddrsToTypeDescriptors[field] = lastTypeDescriptor
+			lastTypeDescriptor = nil
+			lastItab = nil
+			continue
+		}
+		if lastItab != nil {
+			c.valueAddrsToItabs[field] = lastItab
+			lastTypeDescriptor = nil
+			lastItab = nil
+			continue
+		}
+
+		tmpTypeDescriptor := getAs[*heapdump.TypeDescriptor](c, field)
+		if tmpTypeDescriptor != nil {
+			lastTypeDescriptor = *tmpTypeDescriptor
+		}
+
+		tmpItab := getAs[*heapdump.Itab](c, field)
+		if tmpItab != nil {
+			lastItab = *tmpItab
+		}
+	}
+}
+
+func (c *TreeClimber) annotate() {
+	for _, r := range c.records {
+		switch record := r.(type) {
+		case heapdump.Owner:
+			c.addFields(record.GetFields())
+		}
+	}
 }
