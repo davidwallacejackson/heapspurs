@@ -19,7 +19,8 @@ type TreeClimber struct {
 
 	memory                      map[uint64]heapdump.Record // Map of all records that represet an in-memory construct
 	valueAddrsToTypeDescriptors map[uint64]*heapdump.TypeDescriptor
-	valueAddrsToItabs           map[uint64]*heapdump.Itab // Map of all type descriptors
+	valueAddrsToItabs           map[uint64]*heapdump.Itab                     // Map of all type descriptors
+	typeDescriptorsToValues     map[heapdump.TypeDescriptor][]heapdump.Record // Map of type descriptor addresses to all values associated with them
 
 	owners     map[uint64][]heapdump.Record // Maps from pointed-to objects to the thing(s) pointing to them
 	visited    map[uint64]bool              // Temporary state used to keep track of already-visited nodes during graph traversal
@@ -30,6 +31,7 @@ func NewTreeClimber(reader *bufio.Reader) (*TreeClimber, error) {
 	c := &TreeClimber{
 		valueAddrsToTypeDescriptors: make(map[uint64]*heapdump.TypeDescriptor),
 		valueAddrsToItabs:           make(map[uint64]*heapdump.Itab),
+		typeDescriptorsToValues:     make(map[heapdump.TypeDescriptor][]heapdump.Record),
 	}
 	err := c.build(reader)
 	if err != nil {
@@ -264,7 +266,7 @@ func (c *TreeClimber) printOwners(address uint64, depth int, prefix ...string) e
 		}
 
 		output := fmt.Sprintf("%s%T%s @ 0x%x\n", indent, o, name, address)
-		output = strings.Replace(output, "heapdump.", "", 1)
+		output = strings.Replace(output, "*heapdump.", "", 1)
 		fmt.Print(output)
 	} else {
 		s, _ := r.(fmt.Stringer)
@@ -415,6 +417,10 @@ func (c *TreeClimber) addFields(o heapdump.Owner) {
 	for _, ptr := range pointers {
 		if lastTypeDescriptor != nil {
 			c.valueAddrsToTypeDescriptors[ptr] = lastTypeDescriptor
+			c.typeDescriptorsToValues[*lastTypeDescriptor] = append(
+				c.typeDescriptorsToValues[*lastTypeDescriptor],
+				c.memory[ptr],
+			)
 			lastTypeDescriptor = nil
 			lastItab = nil
 			continue

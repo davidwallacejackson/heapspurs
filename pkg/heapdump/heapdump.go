@@ -19,6 +19,7 @@ type Addressable interface {
 }
 
 type Owner interface {
+	Record
 	Addressable
 	GetContents() []byte
 	GetFields() []uint64
