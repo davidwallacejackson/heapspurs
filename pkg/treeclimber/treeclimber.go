@@ -249,8 +249,27 @@ func (c *TreeClimber) printOwners(address uint64, depth int, prefix ...string) e
 		indent = indent + p
 	}
 	//fmt.Printf("%s%T @ 0x%x\n", indent, r, address)
-	s, _ := r.(fmt.Stringer)
-	fmt.Printf("%s%s\n", indent, s.String())
+	if o, isOwner := r.(heapdump.Owner); isOwner {
+		var typeDescriptor *heapdump.TypeDescriptor
+
+		if t := c.valueAddrsToTypeDescriptors[address]; t != nil {
+			typeDescriptor = t
+		} else if itab := c.valueAddrsToItabs[address]; itab != nil {
+			typeDescriptor = c.valueAddrsToTypeDescriptors[itab.TypeDescriptorAddress]
+		}
+
+		var name string
+		if typeDescriptor != nil {
+			name = fmt.Sprintf(" (%s)", typeDescriptor.Name)
+		}
+
+		output := fmt.Sprintf("%s%T%s @ 0x%x\n", indent, o, name, address)
+		output = strings.Replace(output, "heapdump.", "", 1)
+		fmt.Print(output)
+	} else {
+		s, _ := r.(fmt.Stringer)
+		fmt.Printf("%s%s\n", indent, s.String())
+	}
 
 	o, found := c.owners[address]
 	if !found {
