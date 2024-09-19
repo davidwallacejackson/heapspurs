@@ -10,18 +10,19 @@ import (
 )
 
 type Config struct {
-	Dumpfile string
-	Output   string
-	Oid      string
-	Program  string
-	Address  uint64
-	Children bool
-	Print    bool
-	Find     string
-	Hexdump  bool
-	Anchors  bool
-	Owners   int
-	MakeDump string
+	Dumpfile  string
+	Output    string
+	Oid       string
+	Program   string
+	Address   uint64
+	Children  bool
+	Print     bool
+	Find      string
+	Hexdump   bool
+	Anchors   bool
+	Owners    int
+	MakeDump  string
+	Intersect string
 }
 
 func Initialize() (*Config, error) {
@@ -32,6 +33,7 @@ func Initialize() (*Config, error) {
 	flag.String("program", "", "File to read symbol information from")
 	flag.Int("address", 0, "Address of object to analyze")
 	// flag.Bool("children", false, "If set, will show children rather than parents")
+	flag.String("intersect", "", "If set to a path to another heapdump, print the intersection of the two heapdumps")
 	flag.Bool("print", false, "If set, will list all dumpfile records and exit")
 	flag.String("find", "", "Finds an object whose name matches the specified regular expression")
 	flag.Bool("hexdump", false, "If set, will print a hexdump of the specified object and exit")

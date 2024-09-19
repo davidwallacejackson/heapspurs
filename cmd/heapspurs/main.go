@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"runtime"
@@ -73,7 +74,40 @@ func main() {
 		return
 	}
 
+	logger := log.Default()
+
+	logger.Printf("Reading heap dump %s...\n", conf.Dumpfile)
 	climber, err := treeclimber.NewTreeClimber(reader)
+	if err != nil {
+		panic(err)
+	}
+	logger.Println("Done reading heap dump.")
+
+	if conf.Intersect != "" {
+		file2, err := os.Open(conf.Intersect)
+		if err != nil {
+			panic(fmt.Sprintf("Open '%s': %v\n", conf.Intersect, err))
+		}
+		reader2 := bufio.NewReader(file2)
+
+		logger.Printf("Reading other heap dump to intersect %s...\n", conf.Dumpfile)
+		climber2, err := treeclimber.NewTreeClimber(reader2)
+		if err != nil {
+			panic(err)
+		}
+		file2.Close()
+		logger.Println("Done reading heap dump.")
+
+		logger.Println("Intersecting heap dumps...")
+		intersection := climber.Intersection(climber2)
+		logger.Println("Done intersecting heap dumps.")
+
+		for _, record := range intersection.GetRecords() {
+			heapdump.PrintRecord(record, intersection.GetParams())
+		}
+
+		os.Exit(0)
+	}
 
 	if len(conf.MakeDump) > 0 {
 		f, err := os.Create(conf.MakeDump)

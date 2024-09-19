@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"reflect"
 	"strings"
 
 	"github.com/adamroach/heapspurs/pkg/heapdump"
@@ -29,11 +31,7 @@ type TreeClimber struct {
 }
 
 func NewTreeClimber(reader *bufio.Reader) (*TreeClimber, error) {
-	c := &TreeClimber{
-		valueAddrsToTypeDescriptors: make(map[uint64]*heapdump.TypeDescriptor),
-		valueAddrsToItabs:           make(map[uint64]*heapdump.Itab),
-		typeDescriptorsToValues:     make(map[heapdump.TypeDescriptor][]heapdump.Record),
-	}
+	c := &TreeClimber{}
 	err := c.build(reader)
 	if err != nil {
 		return nil, err
@@ -105,9 +103,46 @@ func (c *TreeClimber) WriteImage(address uint64, w io.Writer, format graphviz.Fo
 	return g.Render(graph, format, w)
 }
 
-// func (c *TreeClimber) Intersection(other *TreeClimber) *TreeClimber {
-// 	intersection := TreeClimber{}
-// }
+func (c *TreeClimber) Intersection(other *TreeClimber) *TreeClimber {
+	logger := log.Default()
+	intersection := &TreeClimber{}
+	intersection.init()
+
+	if c.params != other.params {
+		log.Printf("Warning: Dump parameters differ; using parameters from first dump\n")
+		intersection.params = c.params
+	}
+
+	logger.Printf("Finding intersection of %d records and %d records\n", len(c.records), len(other.records))
+
+	for i, record := range c.records {
+		if i%10000 == 0 {
+			logger.Printf("Processing record %d\n", i)
+		}
+		if a, isAddressable := record.(heapdump.Addressable); isAddressable {
+			if found, ok := other.memory[a.GetAddress()]; ok {
+				// use reflection to get the concrete types of both records
+				if reflect.TypeOf(record) == reflect.TypeOf(found) && reflect.DeepEqual(record, found) {
+
+					intersection.addRecord(record)
+				} else {
+				}
+			}
+		}
+	}
+
+	intersection.annotate()
+
+	return intersection
+}
+
+func (c *TreeClimber) GetRecords() []heapdump.Record {
+	return c.records
+}
+
+func (c *TreeClimber) GetParams() *heapdump.DumpParams {
+	return c.params
+}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -399,15 +434,22 @@ func (c *TreeClimber) addRecord(record heapdump.Record) error {
 	return nil
 }
 
+func (c *TreeClimber) init() {
+	c.valueAddrsToTypeDescriptors = make(map[uint64]*heapdump.TypeDescriptor)
+	c.valueAddrsToItabs = make(map[uint64]*heapdump.Itab)
+	c.typeDescriptorsToValues = make(map[heapdump.TypeDescriptor][]heapdump.Record)
+	c.memory = make(map[uint64]heapdump.Record)
+	c.owners = make(map[uint64][]heapdump.Record)
+	c.finalizers = make(map[uint64]heapdump.Record)
+}
+
 func (c *TreeClimber) build(reader *bufio.Reader) error {
 	err := heapdump.ReadHeader(reader)
 	if err != nil {
 		return fmt.Errorf("Reading header: %w\n", err)
 	}
 
-	c.memory = make(map[uint64]heapdump.Record)
-	c.owners = make(map[uint64][]heapdump.Record)
-	c.finalizers = make(map[uint64]heapdump.Record)
+	c.init()
 
 	for {
 		record, err := heapdump.ReadRecord(reader)
