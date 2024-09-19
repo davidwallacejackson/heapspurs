@@ -3,6 +3,7 @@ package treeclimber
 import (
 	"bufio"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -104,6 +105,10 @@ func (c *TreeClimber) WriteImage(address uint64, w io.Writer, format graphviz.Fo
 	return g.Render(graph, format, w)
 }
 
+// func (c *TreeClimber) Intersection(other *TreeClimber) *TreeClimber {
+// 	intersection := TreeClimber{}
+// }
+
 ///////////////////////////////////////////////////////////////////////////
 
 func unitize(x uint64) string {
@@ -184,9 +189,16 @@ func (c *TreeClimber) addNode(graph *cgraph.Graph, address uint64, spotlight boo
 						}
 						ps := heapdump.GetPointersSourceAddress(a, dest, c.params)
 						if ps != 0 {
-							name := heapdump.GetName(ps)
-							if name != "" {
-								edge.SetTailLabel(name)
+							oidName := heapdump.GetName(ps)
+							if oidName != "" {
+								edge.SetTailLabel(oidName)
+								println("found new name for %x, (%s -> %s)", r.Address, r.Name, oidName)
+								// set the OID as this thing's name
+								if r.Name != "" {
+									r.Name = fmt.Sprintf("%s [orig: %s]", oidName, r.Name)
+								} else {
+									r.Name = oidName
+								}
 							}
 						}
 					}
@@ -263,6 +275,8 @@ func (c *TreeClimber) printOwners(address uint64, depth int, prefix ...string) e
 		var name string
 		if typeDescriptor != nil {
 			name = fmt.Sprintf(" (%s)", typeDescriptor.Name)
+		} else if obj, isObject := r.(*heapdump.Object); isObject {
+			name = fmt.Sprintf(" (%s)", obj.GetName())
 		}
 
 		output := fmt.Sprintf("%s%T%s @ 0x%x\n", indent, o, name, address)
@@ -347,6 +361,44 @@ func getAs[R heapdump.Record](c *TreeClimber, address uint64) *R {
 	return nil
 }
 
+var eofRecordError = errors.New("EofRecord")
+
+func (c *TreeClimber) addRecord(record heapdump.Record) error {
+	switch r := record.(type) {
+	case *heapdump.Eof:
+		return eofRecordError
+	case *heapdump.DumpParams:
+		c.params = r
+	case *heapdump.QueuedFinalizer:
+		c.finalizers[r.ObjectAddress] = r
+	case *heapdump.RegisteredFinalizer:
+		c.finalizers[r.ObjectAddress] = r
+	}
+
+	a, isAddressable := record.(heapdump.Addressable)
+	if isAddressable {
+		c.memory[a.GetAddress()] = record
+	}
+
+	// Dump parameters isn't *defined* to come before other
+	// records; but in practice, it does. If this changes,
+	// we may need to move the construction of owner pointers
+	// to after we read all of the records in the file.
+	o, isOwner := record.(heapdump.Owner)
+	if isOwner {
+		pointers := heapdump.GetPointers(o, c.params)
+		for i := 0; i < len(pointers); i++ {
+			if pointers[i] != 0 {
+				c.addOwner(pointers[i], record)
+			}
+		}
+	}
+
+	c.records = append(c.records, record)
+
+	return nil
+}
+
 func (c *TreeClimber) build(reader *bufio.Reader) error {
 	err := heapdump.ReadHeader(reader)
 	if err != nil {
@@ -357,44 +409,19 @@ func (c *TreeClimber) build(reader *bufio.Reader) error {
 	c.owners = make(map[uint64][]heapdump.Record)
 	c.finalizers = make(map[uint64]heapdump.Record)
 
-readloop:
 	for {
 		record, err := heapdump.ReadRecord(reader)
 		if err != nil {
 			return err
 		}
 
-		switch r := record.(type) {
-		case *heapdump.Eof:
-			break readloop
-		case *heapdump.DumpParams:
-			c.params = r
-		case *heapdump.QueuedFinalizer:
-			c.finalizers[r.ObjectAddress] = r
-		case *heapdump.RegisteredFinalizer:
-			c.finalizers[r.ObjectAddress] = r
-		}
-
-		a, isAddressable := record.(heapdump.Addressable)
-		if isAddressable {
-			c.memory[a.GetAddress()] = record
-		}
-
-		// Dump parameters isn't *defined* to come before other
-		// records; but in practice, it does. If this changes,
-		// we may need to move the construction of owner pointers
-		// to after we read all of the records in the file.
-		o, isOwner := record.(heapdump.Owner)
-		if isOwner {
-			pointers := heapdump.GetPointers(o, c.params)
-			for i := 0; i < len(pointers); i++ {
-				if pointers[i] != 0 {
-					c.addOwner(pointers[i], record)
-				}
+		if err := c.addRecord(record); err != nil {
+			if !errors.Is(err, eofRecordError) {
+				println("weird error: %w", err)
 			}
-		}
 
-		c.records = append(c.records, record)
+			break
+		}
 	}
 
 	return nil
